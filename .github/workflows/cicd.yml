@@ -1,0 +1,68 @@
+name: Terraform + Ansible CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. Checkout repository
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # 2. Setup Terraform
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+
+    # 3. Terraform Init
+    - name: Terraform Init
+      working-directory: terraform
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_REGION: ${{ secrets.AWS_REGION }}
+      run: terraform init
+
+    # 4. Terraform Apply
+    - name: Terraform Apply
+      working-directory: terraform
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_REGION: ${{ secrets.AWS_REGION }}
+      run: terraform apply -auto-approve
+
+    # 5. Get EC2 Public IP
+    - name: Capture EC2 Public IP
+      id: ec2_ip
+      working-directory: terraform
+      run: |
+        echo "EC2_IP=$(terraform output -raw ec2_public_ip)" >> $GITHUB_ENV
+
+    # 6. Setup SSH key
+    - name: Setup SSH
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan -H $EC2_IP >> ~/.ssh/known_hosts
+
+    # 7. Install Ansible
+    - name: Install Ansible
+      run: sudo apt-get update && sudo apt-get install -y ansible
+
+    # 8. Update Ansible inventory
+    - name: Update inventory
+      run: |
+        echo "[ec2]" > ansible/inventory.ini
+        echo "$EC2_IP ansible_user=ec2-user ansible_ssh_private_key_file=~/.ssh/id_rsa" >> ansible/inventory.ini
+
+    # 9. Run Ansible Playbook
+    - name: Run Ansible
+      run: ansible-playbook -i ansible/inventory.ini ansible/playbook.yml
+
